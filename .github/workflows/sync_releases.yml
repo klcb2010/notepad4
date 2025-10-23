@@ -1,4 +1,4 @@
-name: Sync Latest Release
+name: Sync Last 2 zh-Hans Assets
 
 on:
   schedule:
@@ -39,11 +39,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload all assets
+      - name: Upload last 2 zh-Hans assets
         run: |
-          ASSET_COUNT=$(jq '.assets | length' upstream.json)
-          for i in $(seq 0 $(($ASSET_COUNT - 1))); do
-            URL=$(jq -r ".assets[$i].browser_download_url" upstream.json)
+          # 获取所有 zh-Hans 文件
+          ASSETS=$(jq -r '.assets[].browser_download_url' upstream.json | grep "zh-Hans")
+          # 只保留最后两个
+          LAST2=$(echo "$ASSETS" | tail -n 2)
+
+          for URL in $LAST2; do
             FILE=$(basename "$URL")
             echo "⬇️ Downloading $FILE ..."
             curl -sSL "$URL" -o "$FILE"
