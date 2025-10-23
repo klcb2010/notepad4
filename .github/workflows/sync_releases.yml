@@ -1,4 +1,4 @@
-name: Sync Last 2 zh-Hans Assets (Smart Skip Existing)
+name: Sync Last 2 zh-Hans Assets (Safe)
 
 on:
   schedule:
@@ -22,6 +22,7 @@ jobs:
       - name: Fetch latest release from upstream
         id: fetch
         run: |
+          echo "🔍 Fetching latest release from zufuliu/notepad4 ..."
           curl -s https://api.github.com/repos/zufuliu/notepad4/releases/latest > upstream.json
           TAG=$(jq -r .tag_name upstream.json)
           NAME=$(jq -r .name upstream.json)
@@ -49,9 +50,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload last 2 zh-Hans assets
+      - name: Upload last 2 zh-Hans assets safely
         run: |
-          ASSETS=$(jq -r '.assets[].browser_download_url' upstream.json | grep "zh-Hans")
+          # 检查 assets 是否存在
+          HAS_ASSETS=$(jq '.assets != null and (.assets | length > 0)' upstream.json)
+          if [ "$HAS_ASSETS" != "true" ]; then
+            echo "⚠️ No assets found in upstream release, skipping upload."
+            exit 0
+          fi
+
+          # 获取所有 zh-Hans 文件
+          ASSETS=$(jq -r '.assets[].browser_download_url' upstream.json | grep "zh-Hans" || true)
+          if [ -z "$ASSETS" ]; then
+            echo "⚠️ No zh-Hans assets found, skipping upload."
+            exit 0
+          fi
+
+          # 只取最后两个
           LAST2=$(echo "$ASSETS" | tail -n 2)
 
           for URL in $LAST2; do
@@ -65,4 +80,7 @@ jobs:
             else
               echo "⚠️ $FILE already exists, skipping"
             fi
+
+            # 删除本地下载文件
+            rm -f "$FILE"
           done
