@@ -1,13 +1,14 @@
-name: Sync Upstream Releases
+name: Sync Latest Release
 
 on:
   schedule:
-    - cron: "0 3 * * *"  # 每天早上 3 点自动执行（UTC 时间，可按需修改）
-  workflow_dispatch:      # 允许手动触发
+    - cron: "0 3 * * *"  # 每天凌晨3点自动执行（UTC时间，可按需修改）
+  workflow_dispatch:      # 支持手动触发
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -15,40 +16,62 @@ jobs:
       - name: Install jq
         run: sudo apt-get install -y jq
 
-      - name: Sync releases from upstream
+      - name: Sync latest release from upstream
         env:
           UPSTREAM: zufuliu/notepad4
           DOWNSTREAM: klcb2010/notepad4
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
-          echo "Fetching releases from $UPSTREAM ..."
-          releases=$(curl -s https://api.github.com/repos/$UPSTREAM/releases)
+          echo "🔍 Fetching latest release from $UPSTREAM ..."
+          latest=$(curl -s https://api.github.com/repos/$UPSTREAM/releases/latest)
+          tag=$(echo "$latest" | jq -r .tag_name)
+          name=$(echo "$latest" | jq -r .name)
+          body=$(echo "$latest" | jq -r .body)
+          draft=$(echo "$latest" | jq -r .draft)
+          prerelease=$(echo "$latest" | jq -r .prerelease)
+          asset=$(echo "$latest" | jq -r '.assets[0].browser_download_url')
 
-          echo "$releases" | jq -r '.[] | [.tag_name, .name, .body, .draft, .prerelease, .assets[0].browser_download_url] | @tsv' |
-          while IFS=$'\t' read -r tag name body draft prerelease asset; do
-            echo "Processing tag: $tag"
-            # 检查目标仓库是否已存在该 release
-            exist=$(curl -s https://api.github.com/repos/$DOWNSTREAM/releases/tags/$tag | jq -r .tag_name)
-            if [ "$exist" != "$tag" ]; then
-              echo "Creating new release: $tag"
-              json=$(jq -n --arg tag "$tag" --arg name "$name" --arg body "$body" \
-                --argjson draft "$draft" --argjson prerelease "$prerelease" \
-                '{tag_name:$tag, name:$name, body:$body, draft:$draft, prerelease:$prerelease}')
-              upload_url=$(curl -s -X POST -H "Authorization: token $GH_TOKEN" \
-                -H "Accept: application/vnd.github+json" \
-                https://api.github.com/repos/$DOWNSTREAM/releases \
-                -d "$json" | jq -r .upload_url | sed 's/{?name,label}//')
-              if [ -n "$asset" ] && [ "$asset" != "null" ]; then
-                echo "Uploading asset..."
-                filename=$(basename "$asset")
-                curl -sL "$asset" -o "$filename"
-                curl -s -X POST -H "Authorization: token $GH_TOKEN" \
-                  -H "Content-Type: application/octet-stream" \
-                  --data-binary @"$filename" \
-                  "$upload_url?name=$filename" > /dev/null
-                echo "✅ Uploaded: $filename"
-              fi
-            else
-              echo "Already exists: $tag"
-            fi
-          done
+          echo "📦 Latest release: $tag"
+
+          exist=$(curl -s https://api.github.com/repos/$DOWNSTREAM/releases/tags/$tag | jq -r .tag_name)
+          if [ "$exist" = "$tag" ]; then
+            echo "✅ Already up to date ($tag)"
+            exit 0
+          fi
+
+          echo "🚀 Creating new release: $tag"
+          json=$(jq -n --arg tag "$tag" --arg name "$name" --arg body "$body" \
+            --argjson draft "$draft" --argjson prerelease "$prerelease" \
+            '{tag_name:$tag, name:$name, body:$body, draft:$draft, prerelease:$prerelease}')
+
+          response=$(curl -s -X POST -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/$DOWNSTREAM/releases \
+            -d "$json")
+
+          echo "$response" > response.json
+          upload_url=$(jq -r .upload_url response.json | sed 's/{?name,label}//')
+
+          if [ -z "$upload_url" ] || [ "$upload_url" = "null" ]; then
+            echo "⚠️ Failed to create release. Response:"
+            cat response.json
+            exit 1
+          fi
+
+          if [ -n "$asset" ] && [ "$asset" != "null" ]; then
+            echo "⬇️ Downloading asset: $asset"
+            filename=$(basename "$asset")
+            curl -sL "$asset" -o "$filename"
+
+            echo "⬆️ Uploading asset to $DOWNSTREAM ..."
+            curl -s -X POST -H "Authorization: token $GH_TOKEN" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$filename" \
+              "$upload_url?name=$filename" > /dev/null
+
+            echo "✅ Uploaded asset: $filename"
+          else
+            echo "⚠️ No asset found in upstream release."
+          fi
+
+          echo "🎉 Sync complete: $tag"
