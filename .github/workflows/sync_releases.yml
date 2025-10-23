@@ -13,55 +13,40 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq curl
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq curl gh
 
-      - name: Get latest release from upstream
-        id: upstream
+      - name: Authenticate GitHub CLI
+        run: gh auth login --with-token <<< "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Fetch latest release from upstream
+        id: fetch
         run: |
-          echo "🔍 Fetching latest release from zufuliu/notepad4..."
           curl -s https://api.github.com/repos/zufuliu/notepad4/releases/latest > upstream.json
-
           TAG=$(jq -r .tag_name upstream.json)
           NAME=$(jq -r .name upstream.json)
           BODY=$(jq -r .body upstream.json)
-          ASSET_URL=$(jq -r '.assets[0].browser_download_url' upstream.json)
-
           echo "TAG=$TAG" >> $GITHUB_ENV
           echo "NAME=$NAME" >> $GITHUB_ENV
-          echo "BODY_FILE=release_body.md" >> $GITHUB_ENV
-
           echo "$BODY" > release_body.md
 
-          if [ "$ASSET_URL" != "null" ]; then
-            echo "ASSET_URL=$ASSET_URL" >> $GITHUB_ENV
-          fi
-
       - name: Create release in own repo
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ env.TAG }}
-          release_name: ${{ env.NAME }}
-          body_path: ${{ env.BODY_FILE }}
-          draft: false
-          prerelease: false
-
-      - name: Download asset
-        if: env.ASSET_URL != ''
-        run: |
-          echo "⬇️ Downloading asset $ASSET_URL..."
-          curl -L $ASSET_URL -o asset_file
-
-      - name: Upload asset
-        if: env.ASSET_URL != ''
-        uses: actions/upload-release-asset@v1
+          name: ${{ env.NAME }}
+          body_path: release_body.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: asset_file
-          asset_name: $(basename ${{ env.ASSET_URL }})
-          asset_content_type: application/octet-stream
+
+      - name: Upload all assets
+        run: |
+          ASSET_COUNT=$(jq '.assets | length' upstream.json)
+          for i in $(seq 0 $(($ASSET_COUNT - 1))); do
+            URL=$(jq -r ".assets[$i].browser_download_url" upstream.json)
+            FILE=$(basename "$URL")
+            echo "⬇️ Downloading $FILE ..."
+            curl -sSL "$URL" -o "$FILE"
+            echo "⬆️ Uploading $FILE ..."
+            gh release upload ${{ env.TAG }} "$FILE" --repo klcb2010/notepad4
+          done
