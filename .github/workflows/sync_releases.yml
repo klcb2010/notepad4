@@ -10,28 +10,36 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Get latest release from upstream
         id: upstream
         run: |
-          # 获取上游最新 release 的 JSON
+          echo "🔍 Fetching latest release from upstream..."
+          # 上游公共仓库 release，不需要 token
           curl -s https://api.github.com/repos/zufuliu/notepad4/releases/latest > upstream.json
+          
           TAG=$(jq -r .tag_name upstream.json)
           NAME=$(jq -r .name upstream.json)
           BODY=$(jq -r .body upstream.json)
           ASSET_URL=$(jq -r '.assets[0].browser_download_url' upstream.json)
-          
+
+          # 保存 tag 和 name 到 GITHUB_ENV
           echo "TAG=$TAG" >> $GITHUB_ENV
           echo "NAME=$NAME" >> $GITHUB_ENV
-          echo "BODY=$BODY" >> $GITHUB_ENV
           echo "ASSET_URL=$ASSET_URL" >> $GITHUB_ENV
 
-      - name: Check if release exists
+          # 保存 body 到临时文件，避免换行或特殊字符导致错误
+          echo "$BODY" > release_body.md
+
+      - name: Check if release exists in our repo
         id: check
         run: |
-          EXIST=$(curl -s -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+          EXIST=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             https://api.github.com/repos/klcb2010/notepad4/releases/tags/${{ env.TAG }} | jq -r .tag_name // empty)
           echo "EXIST=$EXIST" >> $GITHUB_ENV
 
@@ -40,25 +48,25 @@ jobs:
         if: env.EXIST == ''
         uses: actions/create-release@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ env.TAG }}
           release_name: ${{ env.NAME }}
-          body: ${{ env.BODY }}
+          body_path: release_body.md
           draft: false
           prerelease: false
 
       - name: Download asset
         if: env.ASSET_URL != 'null'
         run: |
-          echo "Downloading asset from $ASSET_URL"
+          echo "⬇️ Downloading asset from $ASSET_URL"
           curl -L $ASSET_URL -o asset_file
 
       - name: Upload asset
         if: env.ASSET_URL != 'null' && env.EXIST == ''
         uses: actions/upload-release-asset@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: asset_file
