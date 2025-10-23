@@ -1,4 +1,4 @@
-name: Sync Last 2 zh-Hans Assets
+name: Sync Last 2 zh-Hans Assets (Smart Skip Existing)
 
 on:
   schedule:
@@ -30,7 +30,17 @@ jobs:
           echo "NAME=$NAME" >> $GITHUB_ENV
           echo "$BODY" > release_body.md
 
-      - name: Create release in own repo
+      - name: Check if release already exists
+        id: check_release
+        run: |
+          if gh release view ${{ env.TAG }} --repo klcb2010/notepad4 > /dev/null 2>&1; then
+            echo "EXISTS=true" >> $GITHUB_ENV
+          else
+            echo "EXISTS=false" >> $GITHUB_ENV
+          fi
+
+      - name: Create release if not exists
+        if: env.EXISTS == 'false'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ env.TAG }}
@@ -41,15 +51,18 @@ jobs:
 
       - name: Upload last 2 zh-Hans assets
         run: |
-          # 获取所有 zh-Hans 文件
           ASSETS=$(jq -r '.assets[].browser_download_url' upstream.json | grep "zh-Hans")
-          # 只保留最后两个
           LAST2=$(echo "$ASSETS" | tail -n 2)
 
           for URL in $LAST2; do
             FILE=$(basename "$URL")
             echo "⬇️ Downloading $FILE ..."
             curl -sSL "$URL" -o "$FILE"
-            echo "⬆️ Uploading $FILE ..."
-            gh release upload ${{ env.TAG }} "$FILE" --repo klcb2010/notepad4
+            
+            # 上传文件，如果已存在就跳过
+            if gh release upload ${{ env.TAG }} "$FILE" --repo klcb2010/notepad4 --clobber=false 2>/dev/null; then
+              echo "✅ $FILE uploaded successfully"
+            else
+              echo "⚠️ $FILE already exists, skipping"
+            fi
           done
