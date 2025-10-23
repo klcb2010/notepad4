@@ -2,8 +2,8 @@ name: Sync Latest Release
 
 on:
   schedule:
-    - cron: "0 3 * * *"  # 每天凌晨3点执行（UTC时间）
-  workflow_dispatch:      # 支持手动触发
+    - cron: "0 3 * * *"   # 每天凌晨3点 UTC
+  workflow_dispatch:       # 手动触发
 
 jobs:
   sync:
@@ -14,56 +14,49 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
+        run: sudo apt-get update && sudo apt-get install -y jq curl
 
       - name: Get latest release from upstream
         id: upstream
         run: |
-          echo "🔍 Fetching latest release from upstream..."
-          # 上游公共仓库 release，不需要 token
+          echo "🔍 Fetching latest release from zufuliu/notepad4..."
           curl -s https://api.github.com/repos/zufuliu/notepad4/releases/latest > upstream.json
-          
+
           TAG=$(jq -r .tag_name upstream.json)
           NAME=$(jq -r .name upstream.json)
           BODY=$(jq -r .body upstream.json)
           ASSET_URL=$(jq -r '.assets[0].browser_download_url' upstream.json)
 
-          # 保存 tag 和 name 到 GITHUB_ENV
           echo "TAG=$TAG" >> $GITHUB_ENV
           echo "NAME=$NAME" >> $GITHUB_ENV
-          echo "ASSET_URL=$ASSET_URL" >> $GITHUB_ENV
+          echo "BODY_FILE=release_body.md" >> $GITHUB_ENV
 
-          # 保存 body 到临时文件，避免换行或特殊字符导致错误
           echo "$BODY" > release_body.md
 
-      - name: Check if release exists in our repo
-        id: check
-        run: |
-          EXIST=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            https://api.github.com/repos/klcb2010/notepad4/releases/tags/${{ env.TAG }} | jq -r .tag_name // empty)
-          echo "EXIST=$EXIST" >> $GITHUB_ENV
+          if [ "$ASSET_URL" != "null" ]; then
+            echo "ASSET_URL=$ASSET_URL" >> $GITHUB_ENV
+          fi
 
-      - name: Create release if not exists
+      - name: Create release in own repo
         id: create_release
-        if: env.EXIST == ''
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ env.TAG }}
           release_name: ${{ env.NAME }}
-          body_path: release_body.md
+          body_path: ${{ env.BODY_FILE }}
           draft: false
           prerelease: false
 
       - name: Download asset
-        if: env.ASSET_URL != 'null'
+        if: env.ASSET_URL != ''
         run: |
-          echo "⬇️ Downloading asset from $ASSET_URL"
+          echo "⬇️ Downloading asset $ASSET_URL..."
           curl -L $ASSET_URL -o asset_file
 
       - name: Upload asset
-        if: env.ASSET_URL != 'null' && env.EXIST == ''
+        if: env.ASSET_URL != ''
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
